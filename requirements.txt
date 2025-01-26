@@ -1,0 +1,7 @@
+fastapi
+transformers
+pandas
+matplotlib
+scikit-learn
+keybert
+uvicorn
