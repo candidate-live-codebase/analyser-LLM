@@ -26,7 +26,6 @@ def process_tweet(tweet_content):
     label = sentiment_result[0]["label"]
     score = sentiment_result[0]["score"]
 
-    # Normalize sentiment score
     if label == "NEGATIVE":
         normalized_score = -score
     elif label == "POSITIVE":
@@ -67,6 +66,7 @@ def process_data(data):
             "likes": likes,
             "shares": shares,
             "timestamp": row.get("datetime"),
+            "comments" : row.get("reply_count")
         })
         tweet_texts.append(remove_stop_words(tweet_content))
 
@@ -106,10 +106,10 @@ def process_data(data):
 
 def generate_output(processed_posts_df, top_5_data):
     # 1. Average Likes per Post
-    average_likes_per_post = processed_posts_df['engagement_score'].mean()
+    average_likes_per_post = processed_posts_df['likes'].mean()
 
     # 2. Average Comments per Post
-    average_comments_per_post = 100
+    average_comments_per_post = processed_posts_df['comments'].mean()
 
     # 3. Top 7 Keywords and Their Count
     all_keywords = [kw for sublist in processed_posts_df['trending_keywords'] for kw in sublist]
@@ -142,9 +142,9 @@ def generate_output(processed_posts_df, top_5_data):
     total_neutral_posts = len(processed_posts_df) - total_positive_posts - total_negative_posts  # Remaining posts
 
     output = {
-        "average_likes_per_post": average_likes_per_post,
-        "average_comments_per_post": average_comments_per_post,
-        "top_7_keywords": [{"keyword": kw[0], "count": kw[1]} for kw in top_7_keywords],
+        "average_likes_per_post": int(average_likes_per_post),
+        "average_comments_per_post": int(average_comments_per_post),
+        "top_7_keywords": [{"keyword": kw[0], "count": int(kw[1])} for kw in top_7_keywords],
         "sentiment_coordinates": sentiment_coordinates,
         "overall_normalized_sentiment_score": overall_sentiment_score,
         "overall_sentiment_label": overall_sentiment_label,
@@ -157,5 +157,5 @@ def generate_output(processed_posts_df, top_5_data):
         ],
         "top_5_posts": top_5_data  # Add top 5 tweets based on engagement
     }
-
+    print("output", output)
     return output
