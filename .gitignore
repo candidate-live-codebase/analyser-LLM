@@ -1,2 +1,5 @@
 .venv/
 .env
+summarizer/
+Dockerfile
+__pycache__/

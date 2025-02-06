@@ -128,6 +128,7 @@ async def initialize_elasticsearch():
     except Exception as e:
         logger.error(f"Failed to initialize Elasticsearch: {str(e)}")
         return False
+    
 def prepare_document(user_data: dict, processing_results: Dict) -> Dict:
     """Prepare document for Elasticsearch storage."""
     metadata = {
@@ -169,79 +170,89 @@ async def store_in_elasticsearch(document: Dict) -> bool:
     return False
 
 
-@app.post("/summarize_tweets", response_model=List[Dict[str, Any]])
-async def summarize_tweets_endpoint(request: Request):
-    try:
-        # Directly get the JSON body as a list
-        user_data_list = await request.json()
+# @app.post("/summarize_tweets", response_model=List[Dict[str, Any]])
+# async def summarize_tweets_endpoint(request: Request):
+#     try:
+#         # Directly get the JSON body as a list
+#         user_data_list = await request.json()
 
-        # logger.info(f"Received batch data: {user_data_list}")
+#         # logger.info(f"Received batch data: {user_data_list}")
 
-        if not isinstance(user_data_list, list):
-            raise ValueError("Invalid data structure: Expected a list of JSON objects.")
+#         if not isinstance(user_data_list, list):
+#             raise ValueError("Invalid data structure: Expected a list of JSON objects.")
 
-        summaries = []
-        for user_data in user_data_list:
-            if isinstance(user_data, dict):
-                # If 'tweets' key is missing but data structure matches, wrap it in a list
-                if "tweets" not in user_data and "content" in user_data:
-                    user_data = {"user_id": "unknown", "tweets": [user_data]}
+#         summaries = []
+#         for user_data in user_data_list:
+#             if isinstance(user_data, dict):
+#                 # If 'tweets' key is missing but data structure matches, wrap it in a list
+#                 if "tweets" not in user_data and "content" in user_data:
+#                     user_data = {"user_id": "unknown", "tweets": [user_data]}
 
-                if "tweets" in user_data and isinstance(user_data["tweets"], list):
-                    summary = summarize_json(user_data)
-                    logger.info(f"Summary output: {summary}")  # Add this line to debug
+#                 if "tweets" in user_data and isinstance(user_data["tweets"], list):
+#                     summary = summarize_json(user_data)
+#                     logger.info(f"Summary output: {summary}")  # Add this line to debug
 
-                    summaries.append({
-                        "user_id": user_data.get("user_id", "unknown"),
-                        "summary": summary
-                    })
+#                     summaries.append({
+#                         "user_id": user_data.get("user_id", "unknown"),
+#                         "summary": summary
+#                     })
               
-                    logger.info(f"Received data: {summaries}")
-                else:
-                    raise ValueError(f"Invalid entry structure: {user_data}")
+#                     logger.info(f"Received data: {summaries}")
+#                 else:
+#                     raise ValueError(f"Invalid entry structure: {user_data}")
 
-        return summaries
+#         return summaries
 
-    except Exception as e:
-        error_doc = {
-            "error": str(e),
-            "timestamp": datetime.utcnow().isoformat()
-        }
+#     except Exception as e:
+#         error_doc = {
+#             "error": str(e),
+#             "timestamp": datetime.utcnow().isoformat()
+#         }
 
-        try:
-            await store_in_elasticsearch({
-                "error_details": error_doc
-            })
-        except Exception as es_error:
-            logger.error(f"Failed to store error in ES: {str(es_error)}")
+#         try:
+#             await store_in_elasticsearch({
+#                 "error_details": error_doc
+#             })
+#         except Exception as es_error:
+#             logger.error(f"Failed to store error in ES: {str(es_error)}")
 
-        return JSONResponse(
-            content=error_doc,
-            status_code=400
-        )
-
-@app.post("/process_user_tweets", response_model=Dict)
-async def process_user_tweets_endpoint(request: Request):
+#         return JSONResponse(
+#             content=error_doc,
+#             status_code=400
+#         )
+@app.post("/summarize_tweets", response_model=Dict)
+async def summarize_tweets_endpoint(request: Request):
     try:
         envelope = await request.json()
         message_data = base64.b64decode(envelope['message']['data']).decode('utf-8')
-        user_data = json.loads(message_data)
+        user_data = json.loads(message_data)  
+        
+
         tweets_df = pd.DataFrame([tweet for tweet in user_data['tweets']])
         tweets_df = tweets_df.rename(columns={'id': 'tweet_id'})
+        
         tweets_df['views'] = pd.to_numeric(tweets_df['views'], errors='coerce')
         tweets_df['likes'] = pd.to_numeric(tweets_df['likes'], errors='coerce')
         tweets_df['shares'] = pd.to_numeric(tweets_df['shares'], errors='coerce')
         tweets_df['reply_count'] = pd.to_numeric(tweets_df['reply_count'], errors='coerce')
-        processing_results = process_data(tweets_df)
-        es_document = prepare_document(user_data, processing_results)
+        print("tweets_df",tweets_df)
+        summary = summarize_json(tweets_df)
+        print("summary",summary)
+        # processing_results = process_data(tweets_df)
+        
+        es_document = prepare_document(user_data, summary)
+
         storage_success = await store_in_elasticsearch(es_document)
+        
         if not storage_success:
             logger.warning("Elasticsearch storage failed")
+        
         return {
             "metadata": es_document["metadata"],
-            "results": processing_results,
+            "results": summary,
             "storage_status": "success" if storage_success else "failed"
         }
+        
     except Exception as e:
         error_doc = {
             "metadata": {
@@ -250,6 +261,7 @@ async def process_user_tweets_endpoint(request: Request):
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }
+        
         try:
             await store_in_elasticsearch({
                 "metadata": error_doc["metadata"],
@@ -260,9 +272,68 @@ async def process_user_tweets_endpoint(request: Request):
             })
         except Exception as es_error:
             logger.error(f"Failed to store error in ES: {str(es_error)}")
+        
         return JSONResponse(
             content=error_doc,
             status_code=400
         )
+    
+@app.post("/process_user_tweets", response_model=Dict)
+async def process_user_tweets_endpoint(request: Request):
+    try:
+        envelope = await request.json()
+        message_data = base64.b64decode(envelope['message']['data']).decode('utf-8')
+        user_data = json.loads(message_data)  
+        
+
+        tweets_df = pd.DataFrame([tweet for tweet in user_data['tweets']])
+        tweets_df = tweets_df.rename(columns={'id': 'tweet_id'})
+        
+        tweets_df['views'] = pd.to_numeric(tweets_df['views'], errors='coerce')
+        tweets_df['likes'] = pd.to_numeric(tweets_df['likes'], errors='coerce')
+        tweets_df['shares'] = pd.to_numeric(tweets_df['shares'], errors='coerce')
+        tweets_df['reply_count'] = pd.to_numeric(tweets_df['reply_count'], errors='coerce')
+
+        processing_results = process_data(tweets_df)
+        
+        es_document = prepare_document(user_data, processing_results)
+
+        storage_success = await store_in_elasticsearch(es_document)
+        
+        if not storage_success:
+            logger.warning("Elasticsearch storage failed")
+        
+        return {
+            "metadata": es_document["metadata"],
+            "results": processing_results,
+            "storage_status": "success" if storage_success else "failed"
+        }
+        
+    except Exception as e:
+        error_doc = {
+            "metadata": {
+                "user_id": user_data['user_id'] if 'user_data' in locals() and 'user_id' in user_data else 'unknown'
+            },
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        try:
+            await store_in_elasticsearch({
+                "metadata": error_doc["metadata"],
+                "error_details": {
+                    "error_message": str(e),
+                    "timestamp": error_doc["timestamp"]
+                }
+            })
+        except Exception as es_error:
+            logger.error(f"Failed to store error in ES: {str(es_error)}")
+        
+        return JSONResponse(
+            content=error_doc,
+            status_code=400
+        )
+    
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

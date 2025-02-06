@@ -3,6 +3,7 @@ import pandas as pd
 from langchain_community.document_loaders import JSONLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.llms import Ollama
+from langchain_core.documents import Document 
 from langchain.chains.summarize import load_summarize_chain
 from langchain.prompts import PromptTemplate
 from typing import List, Dict
@@ -19,23 +20,17 @@ def metadata_func(record, metadata):
     return metadata
 
 # ---------------------- Convert DataFrame to Documents ---------------------- #
-def convert_df_to_documents(df: pd.DataFrame) -> List[Dict]:
-    """Convert the DataFrame of tweets into a list of document-like dictionaries."""
+def convert_df_to_documents(df: pd.DataFrame) -> List[Document]:
+    """Convert the DataFrame of tweets into a list of LangChain Document objects."""
     documents = []
     for _, row in df.iterrows():
-        metadata = {}
-        record = row.to_dict()  # Convert row to dictionary
-        metadata = metadata_func(record, metadata)
-        
-        # Only take the 'content' field from the DataFrame
-        content = record.get("content", "")
-        
-        # Create document
-        document = {
-            "metadata": metadata,
-            "content": content
-        }
+        metadata = metadata_func(row.to_dict(), {})  # Extract metadata
+        content = row.get("content", "")
+
+        # Create a LangChain Document object
+        document = Document(page_content=content, metadata=metadata)
         documents.append(document)
+
     return documents
 
 # ---------------------- Process Documents ---------------------- #
@@ -61,9 +56,9 @@ def generate_summary(documents):
     return chain.run(documents)
 
 # Main function to process and summarize data
-def summarize_json(user_data: Dict):
-    # Convert the incoming user_data['tweets'] to DataFrame
-    tweets_df = pd.DataFrame(user_data['tweets'])
+def summarize_json(tweets_df):
+    # # Convert the incoming user_data['tweets'] to DataFrame
+    # tweets_df = pd.DataFrame(user_data['tweets'])
     
     # Convert the DataFrame to document-like structure
     documents = convert_df_to_documents(tweets_df)
