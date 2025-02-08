@@ -15,6 +15,7 @@ import os
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 from model2 import summarize_json
+import numpy as np
 
 load_dotenv()
 # Configure logging
@@ -131,19 +132,61 @@ async def initialize_elasticsearch():
     
 def prepare_document(user_data: dict, processing_results: Dict) -> Dict:
     """Prepare document for Elasticsearch storage."""
-    metadata = {
-        "user_id": user_data['user_id'],
-        "phone": user_data['phone'],
-        "tweet_count": user_data['tweet_count']
-    }
-    # Since user_data['tweets'] is already a list of dicts, no need for .dict() conversion
-    raw_tweets = user_data['tweets']
-    return {
-        "metadata": metadata,
+    # Clean NaN values
+    def clean_nan(obj):
+        if isinstance(obj, dict):
+            return {k: clean_nan(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [clean_nan(item) for item in obj]
+        elif isinstance(obj, float) and np.isnan(obj):
+            return None
+        return obj
+
+    # Handle datetime and clean tweets
+    cleaned_tweets = []
+    for tweet in user_data['tweets']:
+        tweet_copy = tweet.copy()
+        try:
+            if not 'T' in tweet_copy['datetime']:
+                # Try to parse with the correct format (day first)
+                dt = datetime.strptime(tweet_copy['datetime'], '%d-%m-%Y %H:%M:%S')
+                tweet_copy['datetime'] = dt.isoformat() + 'Z'
+            else:
+                # If it already has 'T', assume it's already in ISO format
+                tweet_copy['datetime'] = tweet_copy['datetime']
+        except Exception as e:
+            # Log the error with more context
+            logger.warning(
+                f"DateTime conversion failed for tweet {tweet_copy.get('id', 'unknown')}: "
+                f"datetime value: {tweet_copy.get('datetime', 'missing')}, error: {str(e)}"
+            )
+            # Keep the original datetime string instead of failing
+            tweet_copy['datetime'] = tweet_copy.get('datetime', '')
+            
+        # Clean any NaN values and add to cleaned tweets
+        cleaned_tweet = clean_nan(tweet_copy)
+        cleaned_tweets.append(cleaned_tweet)
+
+    # Clean processing results
+    cleaned_results = clean_nan(processing_results)
+
+    document = {
+        "metadata": {
+            "user_id": user_data['user_id'],
+            "phone": user_data['phone'],
+            "tweet_count": user_data['tweet_count']
+        },
         "processing_timestamp": datetime.utcnow().isoformat(),
-        "tweet_analysis": processing_results,
-        "raw_tweets": raw_tweets
+        "tweet_analysis": cleaned_results,
+        "raw_tweets": cleaned_tweets
     }
+
+    # Log document structure for debugging
+    logger.debug(f"Prepared document structure: {json.dumps(document, default=str)}")
+
+    return document
+
+
 async def store_in_elasticsearch(document: Dict) -> bool:
     """Store document in Elasticsearch with retry logic."""
     max_retries = 3
@@ -226,6 +269,8 @@ async def summarize_tweets_endpoint(request: Request):
         envelope = await request.json()
         message_data = base64.b64decode(envelope['message']['data']).decode('utf-8')
         user_data = json.loads(message_data)  
+
+        logger.info()
         
 
         tweets_df = pd.DataFrame([tweet for tweet in user_data['tweets']])
@@ -242,7 +287,7 @@ async def summarize_tweets_endpoint(request: Request):
         
         es_document = prepare_document(user_data, summary)
 
-        storage_success = await store_in_elasticsearch(es_document)
+        # storage_success = await store_in_elasticsearch(es_document)
         
         if not storage_success:
             logger.warning("Elasticsearch storage failed")
@@ -281,23 +326,44 @@ async def summarize_tweets_endpoint(request: Request):
 @app.post("/process_user_tweets", response_model=Dict)
 async def process_user_tweets_endpoint(request: Request):
     try:
+        # Get and decode the request data
         envelope = await request.json()
-        message_data = base64.b64decode(envelope['message']['data']).decode('utf-8')
-        user_data = json.loads(message_data)  
+        logger.info(f"Received envelope")
         
+        message_data = base64.b64decode(envelope['message']['data']).decode('utf-8')
+        user_data = json.loads(message_data)
+        logger.info(f"Successfully decoded user data")
 
+        # Create DataFrame
         tweets_df = pd.DataFrame([tweet for tweet in user_data['tweets']])
         tweets_df = tweets_df.rename(columns={'id': 'tweet_id'})
         
-        tweets_df['views'] = pd.to_numeric(tweets_df['views'], errors='coerce')
-        tweets_df['likes'] = pd.to_numeric(tweets_df['likes'], errors='coerce')
-        tweets_df['shares'] = pd.to_numeric(tweets_df['shares'], errors='coerce')
-        tweets_df['reply_count'] = pd.to_numeric(tweets_df['reply_count'], errors='coerce')
+        # Handle datetime conversion with proper format
+        try:
+            tweets_df['datetime'] = pd.to_datetime(
+                tweets_df['datetime'],
+                format='%d-%m-%Y %H:%M:%S',  # Specify exact format
+                dayfirst=True,  # Handle DD-MM-YYYY format
+                errors='coerce'  # Handle any parsing errors gracefully
+            )
+        except Exception as e:
+            logger.error(f"DateTime conversion error: {str(e)}")
+            # Keep original datetime if conversion fails
+            pass
 
+        # Convert numeric columns safely
+        numeric_columns = ['views', 'likes', 'shares', 'reply_count']
+        for col in numeric_columns:
+            tweets_df[col] = pd.to_numeric(tweets_df[col], errors='coerce')
+            
+        logger.info(f"DataFrame prepared with shape: {tweets_df.shape}")
+
+        # Process data
         processing_results = process_data(tweets_df)
+        logger.info("Data processing completed")
         
+        # Prepare and store document
         es_document = prepare_document(user_data, processing_results)
-
         storage_success = await store_in_elasticsearch(es_document)
         
         if not storage_success:
@@ -310,6 +376,8 @@ async def process_user_tweets_endpoint(request: Request):
         }
         
     except Exception as e:
+        logger.error(f"Error in process_user_tweets_endpoint: {str(e)}", exc_info=True)
+        
         error_doc = {
             "metadata": {
                 "user_id": user_data['user_id'] if 'user_data' in locals() and 'user_id' in user_data else 'unknown'
@@ -336,4 +404,4 @@ async def process_user_tweets_endpoint(request: Request):
     
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, timeout_keep_alive=1600)
