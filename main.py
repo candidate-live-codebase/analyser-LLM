@@ -235,9 +235,11 @@ async def summarize_tweets_endpoint(request: Request):
         tweets_df['reply_count'] = pd.to_numeric(tweets_df['reply_count'], errors='coerce')
         # print("tweets_df",tweets_df)
         summary = summarize_json(tweets_df)
+
+
+
         # processing_results = process_data(tweets_df)
         
-        es_document = prepare_document(user_data, summary)
         doc_id = f"{user_data['user_id']}_{int(datetime.utcnow().timestamp())}"
         document = {
             "metadata": {
@@ -246,10 +248,12 @@ async def summarize_tweets_endpoint(request: Request):
                 "tweet_count": user_data['tweet_count']
             },
             "summary": {
-                "summary_text": summary['summary_text'],
+                "summary_text": summary['summary'],
                 "created_at": datetime.utcnow().isoformat()
             }
         }
+
+
 
         await es.index(
             index="tweet_summaries",
@@ -257,6 +261,7 @@ async def summarize_tweets_endpoint(request: Request):
             document=document,
             refresh=True
         )
+
 
         return {
             "metadata": document["metadata"],
