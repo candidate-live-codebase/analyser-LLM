@@ -11,11 +11,6 @@ from dotenv import load_dotenv
 import openai
 import os
 
-import logging
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)  # Set to DEBUG for more details
-logger = logging.getLogger(__name__)
 
 # Example of replacing print with logging
 
