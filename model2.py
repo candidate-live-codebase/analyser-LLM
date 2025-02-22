@@ -36,7 +36,7 @@ def summarize_json(tweets_df):
           reviews_positive - The percent of positive reviews
           reviews_neutral - The percent of neutral reviews
           reviews_negative - The percent of negative reviews
-          action_items - A list of action items to resolve the customer complaints (don't put soemthing which is already good and there is no customer complaints)
+          action_items - A list of action items to resolve the customer complaints (don't put soemthing which is already good and there is no customer complaints or any future measure to b)
           Your output should be raw JSON - do not include any sentences or additional text outside of the JSON object.
           Here is the list of reviews that I want you to summarise:
           {documents}
@@ -44,10 +44,10 @@ def summarize_json(tweets_df):
 
     client = anthropic.Anthropic(
         # defaults to os.environ.get("ANTHROPIC_API_KEY")
-        api_key="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",
+        api_key="your api key",
     )
     message = client.messages.create(
-        model="claude-3-5-sonnet-20240620",
+        model="claude-3-5-sonnet-20241022",
         max_tokens=1024,
         messages=[
             {"role": "user", "content": prompt}
